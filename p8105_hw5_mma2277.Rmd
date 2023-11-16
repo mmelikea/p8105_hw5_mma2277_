@@ -1,0 +1,276 @@
+---
+title: "Homework 5"
+author: "Melike Aksoy"
+uni: "mma2277"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output: github_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+
+
+### Due date
+
+Due: November 16 at 11:59pm. 
+
+### Points
+
+| Problem         | Points    |
+|:--------------- |:--------- |
+| Problem 0       | 20        |
+| Problem 1       | --        |
+| Problem 2       | 40        |
+| Problem 3       | 40        |
+| Optional survey | No points |
+
+
+### Problem 0
+
+This "problem" focuses on structure of your submission, especially the use git and GitHub for reproducibility, R Projects to organize your work, R Markdown to write reproducible reports, relative paths to load data from local files, and reasonable naming structures for your files. This was not prepared as a GitHub repo.
+
+
+
+## Problem 1
+
+For this problem, we are interested in data gathered and made public by _The Washington Post_ on homicides in 50 large U.S. cities. The code chunk below imports and cleans the data.
+
+```{r}
+homicide_df = 
+  read_csv("data/homicide-data.csv", na = c("", "NA", "Unknown")) %>%
+  mutate(
+    city_state = str_c(city, state, sep = ", "),
+    resolution = case_when(
+      disposition == "Closed without arrest" ~ "unsolved",
+      disposition == "Open/No arrest"        ~ "unsolved",
+      disposition == "Closed by arrest"      ~ "solved"
+    )
+  ) %>% 
+  filter(city_state != "Tulsa, AL") 
+```
+
+The resulting dataframe has `r nrow(homicide_df)` entries, on variables that include the victim name, race, age, and sex; the date the homicide was reported; and the location of the homicide. In cleaning, I created a `city_state` variable that includes both city and state, and a `resolution` variable to indicate whether the case was closed by arrest. I also excluded one entry in Tulsa, AL, which is not a major US city and is most likely a data entry error. 
+
+In the next code chunk, I group within cities and summarize to produce the total number of homicides and the number that are solved. 
+
+```{r}
+city_homicide_df = 
+  homicide_df %>% 
+  select(city_state, disposition, resolution) %>% 
+  group_by(city_state) %>% 
+  summarize(
+    hom_total = n(),
+    hom_unsolved = sum(resolution == "unsolved"))
+```
+
+Focusing only on Baltimore, MD, I can use the `prop.test` and `broom::tidy` functions to obtain an estimate and CI of the proportion of unsolved homicides in that city. The table below shows those values.
+
+```{r}
+bmore_test = 
+  prop.test(
+    x = filter(city_homicide_df, city_state == "Baltimore, MD") %>% pull(hom_unsolved),
+    n = filter(city_homicide_df, city_state == "Baltimore, MD") %>% pull(hom_total)) 
+
+broom::tidy(bmore_test) %>% 
+  knitr::kable(digits = 3)
+```
+
+Building on this code, I can use functions in the `purrr` package to obtain estimates and CIs for the proportion of unsolved homicides in each city in my dataset. The code below implements this analysis. 
+
+```{r}
+test_results = 
+  city_homicide_df %>% 
+  mutate(
+    prop_tests = map2(hom_unsolved, hom_total, \(x, y) prop.test(x = x, n = y)),
+    tidy_tests = map(prop_tests, broom::tidy)) %>% 
+  select(-prop_tests) %>% 
+  unnest(tidy_tests) %>% 
+  select(city_state, estimate, conf.low, conf.high) %>% 
+  mutate(city_state = fct_reorder(city_state, estimate))
+```
+
+Finally, I make a plot showing the estimate (and CI) of the proportion of unsolved homicides in each city.
+
+```{r}
+test_results %>% 
+  mutate(city_state = fct_reorder(city_state, estimate)) %>% 
+  ggplot(aes(x = city_state, y = estimate)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+This figure suggests a very wide range in the rate at which homicides are solved -- Chicago is noticeably high and, given the narrowness of the CI, likely is the location of many homicides. 
+
+
+
+## Problem 2
+This zip file contains data from a longitudinal study that included a control arm and an experimental arm. Data for each participant is included in a separate file, and file names include the subject ID and arm.
+
+Create a tidy dataframe containing data from all participants, including the subject ID, arm, and observations over time:
+
+Start with a dataframe containing all file names; the list.files function will help
+Iterate over file names and read in data for each subject using purrr::map and saving the result as a new variable in the dataframe
+Tidy the result; manipulate file names to include control arm and subject ID, make sure weekly observations are “tidy”, and do any other tidying that’s necessary
+Make a spaghetti plot showing observations on each subject over time, and comment on differences between groups.
+
+```{r, message=FALSE, warning=FALSE}
+# Start with a dataframe containing all file names; the list.files
+longstudy_files <- list.files("data", full.names = TRUE)
+
+# creating the function
+read_data_frames <-
+  function(file_path) {
+    long_data <- read_csv(file_path)
+    long_data <- mutate(long_data, ID = str_remove(basename(file_path), "\\.csv"), # creating tidy ID variable
+                        arm = case_when(
+                          str_detect(ID, "con_") ~ "control",
+                          str_detect(ID, "exp_") ~ "experimental",
+                          TRUE ~ NA_character_
+  )
+  ) # creating tidy arm variable which corresponds to treatment arm that subject belongs to
+  return(long_data)
+  }
+
+# Iterate over file names and read in data for each subject using purrr::map
+list_datasets <- purrr::map(longstudy_files, ~read_data_frames(.))
+
+# Binding rows to merge datasets
+longstudy_combined_df <- bind_rows(list_datasets) # binding rows to create the dataset
+```
+
+
+```{r}
+# changing the data format from wide to long for longitudinal data analysis
+longstudy_df=
+    pivot_longer(longstudy_combined_df, week_1:week_8,
+      names_to = "Week", 
+      values_to = "Results") |> 
+      mutate(Week = str_remove(Week, "week_"))
+```
+
+
+```{r}
+ggplot(longstudy_df, aes(x = Week, y = Results, group = ID, color = arm)) +
+  geom_line() +
+  labs(title = "Spaghetti Plot of Observations Over Time",
+       x = "Time",
+       y = "Results",
+       color = "Treatment Arm") +
+  scale_color_viridis_d(option = "viridis") +
+  theme_minimal()
+```
+
+##### Explanations:
+Overall, the results for experimental group was higher than control group during 8 weeks. Compared to control group, the changes in individuals' results showed a steeper increase in experiemental group. 
+
+
+## Problem 3 
+
+When designing an experiment or analysis, a common question is whether it is likely that a true effect will be detected – put differently, whether a false null hypothesis will be rejected. The probability that a false null hypothesis is rejected is referred to as power, and it depends on several factors, including: the sample size; the effect size; and the error variance. In this problem, you will conduct a simulation to explore power in a one-sample t-test.
+
+First set the following design elements:
+
+ Fix n=30
+ Fix σ=5
+ Set μ=0
+ Generate 5000 datasets from the model
+
+ x∼Normal[μ,σ]
+
+ For each dataset, save μ̂  and the p-value arising from a test of H:μ=0 using α=0.05. Hint: to obtain the estimate and p-value, use broom::tidy to clean the output of t.test.
+
+ Repeat the above for μ={1,2,3,4,5,6}, and complete the following:
+
+
+
+```{r}
+#defining the elements
+set.seed(123456)
+
+n = 30
+sigma = 5
+mu_ = 0:6
+alpha = 0.05
+datasets = 5000
+
+#generating 5000 datasets and saving μ̂ and the p-value arising from a test of H:μ=0 using α=0.05. 
+
+simulations_df = map_dfr(mu_, function(mu) {
+  tibble(mu = mu,
+         sim = purrr::map(1:datasets, ~t.test(rnorm(n, mu, sigma))),
+         estimate = map_dbl(sim, ~broom::tidy(.x)$estimate), # broom::tidy for cleaning
+         p_value = map_dbl(sim, ~broom::tidy(.x)$p.value), # broom::tidy for cleaning
+         reject = p_value < alpha)
+})
+
+```
+############################################################################################
+
+Make a plot showing the proportion of times the null was rejected (the power of the test) on the y axis and the true value of μ on the x axis. Describe the association between effect size and power.
+
+```{r}
+proport_times <- simulations_df |>
+  group_by(mu)|>
+  summarize(avg_mu_hat = mean(estimate),
+            avg_mu_hat_reject = mean(estimate[reject]),
+            power = mean(reject))
+
+ggplot(proport_times, aes(x = mu, y = power)) +
+  geom_point() + 
+  geom_line() +
+  labs(x = "True value of μ",
+       y = "Power of the test")
+```
+
+##### Explanations:
+
+Effect size and power of the test are positively associated. Our graph confirms that. As true value of mu increases, the difference between the true mean and null hypothesis mean increases and this lead to an increase in the proportion of times that the null was rejected. The proportion of times that the null rejected, the statistical test will correctly reject the false null hypothesis.
+
+#########################################################################################
+
+ Make a plot showing the average estimate of μ̂  on the y axis and the true value of μ on the x axis. Make a second plot (or overlay on the first) the average estimate of μ̂  only in samples for which the null was rejected on the y axis and the true value of μ on the x axis. Is the sample average of μ̂  across tests for which the null is rejected approximately equal to the true value of μ? Why or why not?
+
+```{r}
+ggplot(proport_times, aes(x=mu, y = avg_mu_hat, color = "average estimate of mu"))+
+  geom_point()+
+  geom_line()+
+  labs(
+    x = "true value of μ",
+    y = "average estimate of μ hat")
+
+ggplot(proport_times, aes(x=mu, y = avg_mu_hat_reject, color = "average estimate of mu for rejected" ))+
+  geom_point()+
+  geom_line()+
+   labs(
+    x = "true value of μ",
+    y = "average estimate of μ̂  only in samples for which the null was rejected")
+```
+
+
+##### Explanations:
+The sample average of μ̂ across tests for which the null is rejected approximately is not equal to the true value of μ. When null is rejected, average estimate of mu is higher than true value of mu. This can be due to sampling variation, type I error, random fluctuations, effect size, power, and randomness in simulations.
+
+
+
+ 
